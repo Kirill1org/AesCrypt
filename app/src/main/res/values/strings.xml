@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AesCrypt</string>
+    <string name="btn_text_encode">Зашифровать</string>
+    <string name="btn_text_decode">Расшифровать</string>
+</resources>
