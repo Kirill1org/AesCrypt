@@ -1,40 +1,32 @@
 package bonch.dev.aescrypt;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-
 
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
-import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UnsupportedEncodingException;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.util.Arrays;
 
-import javax.crypto.BadPaddingException;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
+import java.security.SecureRandom;
+
 
 public class MainActivity extends AppCompatActivity {
 
-    private AESCryptCBD aesCryptCBD;
-    private AESCryptCTR aesCryptCTR;
+    private AESCrypt aesCrypt;
+    private byte[] iv;
 
     private Button encodeBtn;
     private Button decodeBtn;
@@ -46,8 +38,7 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         initViews();
-        setClickListeners();
-        initCryptoParams();
+        initCryptParams();
 
     }
 
@@ -58,15 +49,13 @@ public class MainActivity extends AppCompatActivity {
             case Constants.ENCODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
-                    try {
+                    try (InputStream iStream = getContentResolver().openInputStream(data.getData())) {
 
-                        disabledBtns();
-                        InputStream iStream = getContentResolver().openInputStream(data.getData());
                         encodeFile(getBytes(iStream), getNameFromPath(data.getData().getPath()));
-
 
                     } catch (IOException e) {
                         e.printStackTrace();
+                        throw new RuntimeException("OnActivityResult");
                     }
 
                 }
@@ -75,13 +64,14 @@ public class MainActivity extends AppCompatActivity {
             case Constants.DECODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
-                    try {
+                    try (InputStream inputStream = getContentResolver().openInputStream(data.getData())) {
+
                         disabledBtns();
-                        InputStream iStream = getContentResolver().openInputStream(data.getData());
-                        decodeFile(getBytes(iStream), getNameFromPath(data.getData().getPath()));
+                        decodeFile(getBytes(inputStream), getNameFromPath(data.getData().getPath()));
 
                     } catch (IOException e) {
                         e.printStackTrace();
+                        throw new RuntimeException("OnActivityResult");
                     }
 
                 }
@@ -96,37 +86,18 @@ public class MainActivity extends AppCompatActivity {
         return pathFileArray[pathFileArray.length - 1];
     }
 
-    private void setClickListeners() {
-
-        encodeBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                pickFile(view);
-
-            }
-        });
-
-        decodeBtn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-
-                pickFile(view);
-
-            }
-        });
-    }
-
 
     private void encodeFile(final byte[] inputFile, final String fileName) {
 
-        final Handler handler = new Handler(Looper.myLooper()) {
+        HandlerThread handlerThread = new HandlerThread("HandlerThread");
+        handlerThread.start();
+        Looper looper = handlerThread.getLooper();
+        final Handler handler1 = new Handler(looper) {
             @Override
-            public void handleMessage(Message inputMessage) {
-                Bundle bundle = inputMessage.getData();
+            public void handleMessage(@NonNull Message msg) {
+                Bundle bundle = msg.getData();
                 String fileName = bundle.getString(Constants.HANDLER_MESSAGE_KEY);
-                Toast.makeText(MainActivity.this, fileName + " is successfuly created", Toast.LENGTH_SHORT).show();
-                enabledBtns();
-
+                Toast.makeText(MainActivity.this, fileName + " is successfuly created", Toast.LENGTH_LONG).show();
             }
         };
 
@@ -135,30 +106,27 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void run() {
 
-                Message messageHandler = handler.obtainMessage();
+                Message messageHandler = handler1.obtainMessage();
                 Bundle bundle = new Bundle();
                 bundle.putString(Constants.HANDLER_MESSAGE_KEY, fileName);
                 messageHandler.setData(bundle);
-                handler.sendMessage(messageHandler);
+                handler1.sendMessage(messageHandler);
 
+                writeToFile(aesCrypt.encrypt(inputFile, iv), fileName);
 
-                try {
-                    writeToFile(aesCryptCBD.encrypt(inputFile), fileName);
-                } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
-                    e.printStackTrace();
-                }
 
             }
 
         };
 
-        Thread thread = new Thread(runnable);
-        thread.start();
+        handler1.post(runnable);
+
+
     }
 
     private void decodeFile(final byte[] encodedFile, final String fileName) {
 
-        final Handler handler = new Handler(Looper.myLooper()) {
+        final Handler handler = new Handler(getApplicationContext().getMainLooper()) {
             @Override
             public void handleMessage(Message inputMessage) {
                 Bundle bundle = inputMessage.getData();
@@ -180,12 +148,7 @@ public class MainActivity extends AppCompatActivity {
                 messageHandler.setData(bundle);
                 handler.sendMessage(messageHandler);
 
-
-                try {
-                    writeToFile(aesCryptCBD.decrypt(encodedFile), fileName);
-                } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException | UnsupportedEncodingException e) {
-                    e.printStackTrace();
-                }
+                writeToFile(aesCrypt.decrypt(encodedFile, iv), fileName);
 
             }
 
@@ -198,7 +161,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void writeToFile(byte[] array, String nameFile) {
 
-        try {
+
+        try (FileOutputStream stream = new FileOutputStream(getApplicationContext().getExternalFilesDir("") + "/" + nameFile)) {
             String path = getApplicationContext().getExternalFilesDir("") + "/" + nameFile;
 
             File file = new File(path);
@@ -206,16 +170,13 @@ public class MainActivity extends AppCompatActivity {
                 file.createNewFile();
             }
 
-            FileOutputStream stream = new FileOutputStream(path);
             stream.write(array);
             stream.flush();
-            stream.close();
 
 
-        } catch (FileNotFoundException e1) {
-            Log.e("TAG", e1.getMessage());
-        } catch (IOException e) {
-            Log.e("TAG", e.getMessage());
+        } catch (IOException e1) {
+            e1.printStackTrace();
+            throw new RuntimeException("WriteToFile");
         }
     }
 
@@ -247,24 +208,42 @@ public class MainActivity extends AppCompatActivity {
     private void initViews() {
         encodeBtn = findViewById(R.id.encode_btn);
         decodeBtn = findViewById(R.id.decode_btn);
+
+        encodeBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                pickFile(view);
+
+            }
+        });
+        decodeBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                pickFile(view);
+
+            }
+        });
     }
 
-    private void initCryptoParams() {
+    private void initCryptParams() {
 
-        SecureRandom secureRandom = new SecureRandom();
+        aesCrypt = new AESCrypt(getRandomKey(), Constants.AES_CBC_TYPE);
+        iv = getRandomIV();
 
+    }
+
+    private byte[] getRandomKey() {
         byte[] key = new byte[16];
-        //secureRandom.nextBytes(key);
-        key=new byte[]{28, 1, 119, -115, 35, -42, -90, 127, -66, -59, -41, 104, -53, 123, 96, -107};
-        Log.e("KEY IS:", Arrays.toString(key));
+        SecureRandom secureRandom = new SecureRandom();
+        secureRandom.nextBytes(key);
+        return key;
+    }
 
+    private byte[] getRandomIV() {
         byte[] iv = new byte[16];
-        //secureRandom.nextBytes(iv);
-        iv = new byte[] {32, 103, -65, 89, -109, -100, -6, -40, -107, -18, 54, -38, 26, -112, 122, -89};
-        Log.e("IV IS:", Arrays.toString(iv));
-
-        aesCryptCBD = AESCryptCBD.getInstance(key, iv);
-        aesCryptCTR = AESCryptCTR.getInstance(key,iv);
+        SecureRandom secureRandom = new SecureRandom();
+        secureRandom.nextBytes(iv);
+        return iv;
     }
 
     private void disabledBtns() {
