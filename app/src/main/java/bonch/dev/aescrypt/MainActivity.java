@@ -10,17 +10,18 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.Toast;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
 import java.security.SecureRandom;
+import java.util.Arrays;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -49,31 +50,14 @@ public class MainActivity extends AppCompatActivity {
             case Constants.ENCODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
-                    try (InputStream iStream = getContentResolver().openInputStream(data.getData())) {
-
-                        encodeFile(getBytes(iStream), getNameFromPath(data.getData().getPath()));
-
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        throw new RuntimeException("OnActivityResult");
-                    }
-
+                    encodeFile(data, getNameFromPath(data.getData().getPath()));
                 }
                 break;
             }
             case Constants.DECODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
-                    try (InputStream inputStream = getContentResolver().openInputStream(data.getData())) {
-
-                        disabledBtns();
-                        decodeFile(getBytes(inputStream), getNameFromPath(data.getData().getPath()));
-
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        throw new RuntimeException("OnActivityResult");
-                    }
-
+                    decodeFile(data, getNameFromPath(data.getData().getPath()));
                 }
                 break;
             }
@@ -87,7 +71,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    private void encodeFile(final byte[] inputFile, final String fileName) {
+    private void encodeFile(final Intent data, final String fileName) {
 
         HandlerThread handlerThread = new HandlerThread("HandlerThread");
         handlerThread.start();
@@ -112,7 +96,28 @@ public class MainActivity extends AppCompatActivity {
                 messageHandler.setData(bundle);
                 handler1.sendMessage(messageHandler);
 
-                writeToFile(aesCrypt.encrypt(inputFile, iv), fileName);
+
+                String path = getApplicationContext().getExternalFilesDir("") + "/" + "encoded_" + fileName;
+
+                File file = new File(path);
+                if (!file.exists()) {
+                    try {
+                        file.createNewFile();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        throw new RuntimeException("Creation file error");
+                    }
+                }
+
+                try (InputStream iStream = getContentResolver().openInputStream(data.getData());
+                     FileOutputStream output = new FileOutputStream(file.getAbsolutePath(), true)) {
+
+                    encodeChunkByChunk(iStream, output);
+
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    throw new RuntimeException("Input and output encode file error");
+                }
 
 
             }
@@ -124,15 +129,48 @@ public class MainActivity extends AppCompatActivity {
 
     }
 
-    private void decodeFile(final byte[] encodedFile, final String fileName) {
+    private void encodeChunkByChunk(InputStream iStream, FileOutputStream output) {
+        byte[] buffer = new byte[1024 * 8];
+
+        int len;
+        try {
+            while ((len = iStream.read(buffer)) != -1) {
+                Log.e("LENGTH", String.valueOf(len));
+                Log.e("ENCRYPT_LENGTN", String.valueOf(aesCrypt.encrypt(buffer, iv).length));
+                output.write(aesCrypt.encrypt(Arrays.copyOfRange(buffer, 0, len), iv));
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Encode chunk by chunk error");
+        }
+
+    }
+
+    private void decodeChunkByChunk(InputStream iStream, FileOutputStream output) {
+        byte[] buffer_decode = new byte[(1024 * 8) + 16];
+
+        int len;
+        try {
+            while ((len = iStream.read(buffer_decode)) != -1) {
+                Log.e("LENGTH", String.valueOf(len));
+                Log.e("ENCRYPT_LENGTN", String.valueOf(aesCrypt.decrypt(buffer_decode, iv).length));
+                output.write(aesCrypt.decrypt(Arrays.copyOfRange(buffer_decode, 0, len), iv));
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new RuntimeException("Decode chunk by chunk error");
+        }
+
+    }
+
+    private void decodeFile(final Intent data, final String fileName) {
 
         final Handler handler = new Handler(getApplicationContext().getMainLooper()) {
             @Override
             public void handleMessage(Message inputMessage) {
                 Bundle bundle = inputMessage.getData();
                 String fileName = bundle.getString(Constants.HANDLER_MESSAGE_KEY);
-                Toast.makeText(MainActivity.this, fileName + " is successfuly created", Toast.LENGTH_SHORT).show();
-                enabledBtns();
+                Toast.makeText(MainActivity.this, fileName + " is successfully created", Toast.LENGTH_SHORT).show();
 
             }
         };
@@ -148,50 +186,36 @@ public class MainActivity extends AppCompatActivity {
                 messageHandler.setData(bundle);
                 handler.sendMessage(messageHandler);
 
-                writeToFile(aesCrypt.decrypt(encodedFile, iv), fileName);
+                String path = getApplicationContext().getExternalFilesDir("") + "/" + "decoded_" + fileName;
+
+                File file = new File(path);
+                if (!file.exists()) {
+                    try {
+                        file.createNewFile();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        throw new RuntimeException("Creation file error");
+                    }
+                }
+
+                try (InputStream iStream = getContentResolver().openInputStream(data.getData());
+                     FileOutputStream output = new FileOutputStream(file.getAbsolutePath(), true)) {
+
+                    decodeChunkByChunk(iStream, output);
+
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    throw new RuntimeException("Input and output decode file error");
+                }
+
 
             }
-
         };
 
         Thread thread = new Thread(runnable);
         thread.start();
 
     }
-
-    private void writeToFile(byte[] array, String nameFile) {
-
-
-        try (FileOutputStream stream = new FileOutputStream(getApplicationContext().getExternalFilesDir("") + "/" + nameFile)) {
-            String path = getApplicationContext().getExternalFilesDir("") + "/" + nameFile;
-
-            File file = new File(path);
-            if (!file.exists()) {
-                file.createNewFile();
-            }
-
-            stream.write(array);
-            stream.flush();
-
-
-        } catch (IOException e1) {
-            e1.printStackTrace();
-            throw new RuntimeException("WriteToFile");
-        }
-    }
-
-    private byte[] getBytes(InputStream inputStream) throws IOException {
-        ByteArrayOutputStream byteBuffer = new ByteArrayOutputStream();
-        int bufferSize = 1024;
-        byte[] buffer = new byte[bufferSize];
-
-        int len = 0;
-        while ((len = inputStream.read(buffer)) != -1) {
-            byteBuffer.write(buffer, 0, len);
-        }
-        return byteBuffer.toByteArray();
-    }
-
 
     private void pickFile(View view) {
 
@@ -206,6 +230,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initViews() {
+
         encodeBtn = findViewById(R.id.encode_btn);
         decodeBtn = findViewById(R.id.decode_btn);
 
@@ -245,17 +270,5 @@ public class MainActivity extends AppCompatActivity {
         secureRandom.nextBytes(iv);
         return iv;
     }
-
-    private void disabledBtns() {
-        encodeBtn.setEnabled(false);
-        decodeBtn.setEnabled(false);
-
-    }
-
-    private void enabledBtns() {
-        encodeBtn.setEnabled(true);
-        decodeBtn.setEnabled(true);
-
-    }
-
 }
+

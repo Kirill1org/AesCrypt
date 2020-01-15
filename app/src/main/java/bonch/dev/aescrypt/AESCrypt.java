@@ -1,11 +1,8 @@
 package bonch.dev.aescrypt;
 
-import android.util.Log;
-
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
@@ -31,7 +28,7 @@ public class AESCrypt {
         try {
             cryptBuff = initAesCipher(iv, Cipher.ENCRYPT_MODE).doFinal(message);
         } catch (BadPaddingException | IllegalBlockSizeException e) {
-            //e.printStackTrace();
+            e.printStackTrace();
             throw new RuntimeException("InitAesParametrs");
         }
 
@@ -49,13 +46,13 @@ public class AESCrypt {
         try {
             cipher = Cipher.getInstance(aesType);
         } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
-            //e.printStackTrace();
+            e.printStackTrace();
             throw new RuntimeException("InitAesParametrs");
         }
         try {
             cipher.init(cipherMod, secretKeySpec, ivParameterSpec);
         } catch (InvalidAlgorithmParameterException | InvalidKeyException e) {
-            //e.printStackTrace();
+            e.printStackTrace();
             throw new RuntimeException("InitAesParametrs");
         }
         return cipher;
