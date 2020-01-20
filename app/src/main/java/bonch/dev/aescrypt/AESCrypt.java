@@ -1,5 +1,7 @@
 package bonch.dev.aescrypt;
 
+import android.util.Log;
+
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
@@ -16,62 +18,31 @@ public class AESCrypt {
     private final byte[] key;
     private final String aesType;
 
+
     public AESCrypt(byte[] key, String aesType) {
 
         this.key = key;
         this.aesType = aesType;
     }
 
-    public byte[] encrypt(byte[] message, byte[] iv) {
-
-        byte[] cryptBuff;
-        try {
-            cryptBuff = initAesCipher(iv, Cipher.ENCRYPT_MODE).doFinal(message);
-        } catch (BadPaddingException | IllegalBlockSizeException e) {
-            e.printStackTrace();
-            throw new RuntimeException("InitAesParametrs");
-        }
-
-
-        return cryptBuff;
-
-
+    public byte[] encrypt(byte[] iv, byte[] data, int offset, int length) {
+        return crypt(iv, data, offset, length, Cipher.ENCRYPT_MODE);
     }
 
-    private Cipher initAesCipher(byte[] iv, int cipherMod) {
+    public byte[] decrypt(byte[] iv, byte[] encryptedData, int offset, int length) {
+        return crypt(iv, encryptedData, offset, length, Cipher.DECRYPT_MODE);
+    }
+
+    private byte[] crypt(byte[] iv, byte[] data, int offset, int length, int cipherMod) {
         SecretKeySpec secretKeySpec = new SecretKeySpec(key, "AES");
         IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
-
-        Cipher cipher;
         try {
-            cipher = Cipher.getInstance(aesType);
-        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
-            e.printStackTrace();
-            throw new RuntimeException("InitAesParametrs");
-        }
-        try {
+            Cipher cipher = Cipher.getInstance(aesType);
             cipher.init(cipherMod, secretKeySpec, ivParameterSpec);
-        } catch (InvalidAlgorithmParameterException | InvalidKeyException e) {
-            e.printStackTrace();
-            throw new RuntimeException("InitAesParametrs");
+            return cipher.doFinal(data, offset, length);
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
+            throw new RuntimeException();
         }
-        return cipher;
-
-    }
-
-    public byte[] decrypt(byte[] encryptedMessage, byte[] iv) {
-
-        byte[] originalBytes;
-        try {
-            originalBytes = initAesCipher(iv, Cipher.DECRYPT_MODE).doFinal(encryptedMessage);
-        } catch (BadPaddingException | IllegalBlockSizeException e) {
-            e.printStackTrace();
-            throw new RuntimeException("InitAesParametrs");
-        }
-
-
-        return originalBytes;
-
     }
 
 

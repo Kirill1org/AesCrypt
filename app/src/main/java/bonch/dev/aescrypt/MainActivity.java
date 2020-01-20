@@ -1,15 +1,10 @@
 package bonch.dev.aescrypt;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.Looper;
-import android.os.Message;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -17,11 +12,18 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 
 import java.security.SecureRandom;
-import java.util.Arrays;
+
+import io.reactivex.Observable;
+import io.reactivex.ObservableEmitter;
+import io.reactivex.ObservableOnSubscribe;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.disposables.Disposable;
+import io.reactivex.functions.Action;
+import io.reactivex.functions.Consumer;
+import io.reactivex.schedulers.Schedulers;
 
 
 public class MainActivity extends AppCompatActivity {
@@ -31,6 +33,9 @@ public class MainActivity extends AppCompatActivity {
 
     private Button encodeBtn;
     private Button decodeBtn;
+
+    public static final int ENCODE_REQUEST = 1;
+    public static final int DECODE_REQUEST = 2;
 
 
     @Override
@@ -47,14 +52,14 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         switch (requestCode) {
-            case Constants.ENCODE_REQUEST: {
+            case ENCODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
                     encodeFile(data, getNameFromPath(data.getData().getPath()));
                 }
                 break;
             }
-            case Constants.DECODE_REQUEST: {
+            case DECODE_REQUEST: {
                 if (resultCode == RESULT_OK) {
 
                     decodeFile(data, getNameFromPath(data.getData().getPath()));
@@ -67,162 +72,126 @@ public class MainActivity extends AppCompatActivity {
 
     private String getNameFromPath(String pathFile) {
         String[] pathFileArray = pathFile.split("/");
-        return pathFileArray[pathFileArray.length - 1];
+        String[] pathWithExtention = pathFileArray[pathFileArray.length - 1].split("\\.");
+        return pathWithExtention[0];
     }
 
 
     private void encodeFile(final Intent data, final String fileName) {
+        String path = getApplicationContext().getExternalFilesDir("") + "/" + "encoded_" + fileName + ".CTR";
+        File file = new File(path);
 
-        HandlerThread handlerThread = new HandlerThread("HandlerThread");
-        handlerThread.start();
-        Looper looper = handlerThread.getLooper();
-        final Handler handler1 = new Handler(looper) {
+        Disposable disposable = Observable.create(new ObservableOnSubscribe<byte[]>() {
             @Override
-            public void handleMessage(@NonNull Message msg) {
-                Bundle bundle = msg.getData();
-                String fileName = bundle.getString(Constants.HANDLER_MESSAGE_KEY);
-                Toast.makeText(MainActivity.this, fileName + " is successfuly created", Toast.LENGTH_LONG).show();
+            public void subscribe(ObservableEmitter<byte[]> e) throws Exception {
+
+                byte[] buffer = new byte[1024 * 8];
+                int len;
+                InputStream iStream = getContentResolver().openInputStream(data.getData());
+
+                e.onNext(iv);
+                while ((len = iStream.read(buffer)) != -1) {
+                    Log.e("READING THREAD:", Thread.currentThread().getName());
+                    e.onNext((aesCrypt.encrypt(iv, buffer, 0, len)));
+
+                }
+                e.onComplete();
             }
-        };
+        })
+                .subscribeOn(Schedulers.io())
+                .observeOn(Schedulers.io())
+                .doOnNext(new Consumer<byte[]>() {
+                    @Override
+                    public void accept(byte[] bytes) throws Exception {
 
+                        FileOutputStream output = new FileOutputStream(file, true);
+                        output.write(bytes);
+                        Log.e("WRITE THREAD:", Thread.currentThread().getName());
 
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-
-                Message messageHandler = handler1.obtainMessage();
-                Bundle bundle = new Bundle();
-                bundle.putString(Constants.HANDLER_MESSAGE_KEY, fileName);
-                messageHandler.setData(bundle);
-                handler1.sendMessage(messageHandler);
-
-
-                String path = getApplicationContext().getExternalFilesDir("") + "/" + "encoded_" + fileName;
-
-                File file = new File(path);
-                if (!file.exists()) {
-                    try {
-                        file.createNewFile();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        throw new RuntimeException("Creation file error");
                     }
-                }
+                })
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(new Consumer<byte[]>() {
+                               @Override
+                               public void accept(byte[] bytes) throws Exception {
 
-                try (InputStream iStream = getContentResolver().openInputStream(data.getData());
-                     FileOutputStream output = new FileOutputStream(file.getAbsolutePath(), true)) {
+                               }
+                           },
+                        new Consumer<Throwable>() {
+                            @Override
+                            public void accept(Throwable throwable) throws Exception {
 
-                    encodeChunkByChunk(iStream, output);
+                            }
+                        },
+                        new Action() {
+                            @Override
+                            public void run() throws Exception {
 
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new RuntimeException("Input and output encode file error");
-                }
-
-
-            }
-
-        };
-
-        handler1.post(runnable);
-
-
-    }
-
-    private void encodeChunkByChunk(InputStream iStream, FileOutputStream output) {
-        byte[] buffer = new byte[1024 * 8];
-
-        int len;
-        try {
-            while ((len = iStream.read(buffer)) != -1) {
-                Log.e("LENGTH", String.valueOf(len));
-                Log.e("ENCRYPT_LENGTN", String.valueOf(aesCrypt.encrypt(buffer, iv).length));
-                output.write(aesCrypt.encrypt(Arrays.copyOfRange(buffer, 0, len), iv));
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-            throw new RuntimeException("Encode chunk by chunk error");
-        }
-
-    }
-
-    private void decodeChunkByChunk(InputStream iStream, FileOutputStream output) {
-        byte[] buffer_decode = new byte[(1024 * 8) + 16];
-
-        int len;
-        try {
-            while ((len = iStream.read(buffer_decode)) != -1) {
-                Log.e("LENGTH", String.valueOf(len));
-                Log.e("ENCRYPT_LENGTN", String.valueOf(aesCrypt.decrypt(buffer_decode, iv).length));
-                output.write(aesCrypt.decrypt(Arrays.copyOfRange(buffer_decode, 0, len), iv));
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-            throw new RuntimeException("Decode chunk by chunk error");
-        }
+                            }
+                        });
 
     }
 
     private void decodeFile(final Intent data, final String fileName) {
+        String path = getApplicationContext().getExternalFilesDir("") + "/" + "decoded_" + fileName + ".jpg";
+        File file = new File(path);
 
-        final Handler handler = new Handler(getApplicationContext().getMainLooper()) {
+        Disposable disposable = Observable.create(new ObservableOnSubscribe<byte[]>() {
             @Override
-            public void handleMessage(Message inputMessage) {
-                Bundle bundle = inputMessage.getData();
-                String fileName = bundle.getString(Constants.HANDLER_MESSAGE_KEY);
-                Toast.makeText(MainActivity.this, fileName + " is successfully created", Toast.LENGTH_SHORT).show();
+            public void subscribe(ObservableEmitter<byte[]> e) throws Exception {
+                byte[] buffer = new byte[1024 * 8];
+                InputStream iStream = getContentResolver().openInputStream(data.getData());
+                byte[] ownIv = new byte[16];
 
+                iStream.read(ownIv);
+
+                int len;
+                while ((len = iStream.read(buffer)) != -1) {
+                    Log.e("READING THREAD:", Thread.currentThread().getName());
+                    e.onNext((aesCrypt.decrypt(ownIv, buffer, 0, len)));
+
+                }
+                e.onComplete();
             }
-        };
+        })
+                .subscribeOn(Schedulers.io())
+                .observeOn(Schedulers.io())
+                .doOnNext(new Consumer<byte[]>() {
+                    @Override
+                    public void accept(byte[] bytes) throws Exception {
+                        FileOutputStream output = new FileOutputStream(file, true);
+                        output.write(bytes);
+                        Log.e("WRITING THREAD:", Thread.currentThread().getName());
 
-
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-
-                Message messageHandler = handler.obtainMessage();
-                Bundle bundle = new Bundle();
-                bundle.putString(Constants.HANDLER_MESSAGE_KEY, fileName);
-                messageHandler.setData(bundle);
-                handler.sendMessage(messageHandler);
-
-                String path = getApplicationContext().getExternalFilesDir("") + "/" + "decoded_" + fileName;
-
-                File file = new File(path);
-                if (!file.exists()) {
-                    try {
-                        file.createNewFile();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        throw new RuntimeException("Creation file error");
                     }
-                }
+                })
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(new Consumer<byte[]>() {
+                               @Override
+                               public void accept(byte[] bytes) throws Exception {
 
-                try (InputStream iStream = getContentResolver().openInputStream(data.getData());
-                     FileOutputStream output = new FileOutputStream(file.getAbsolutePath(), true)) {
+                               }
+                           },
+                        new Consumer<Throwable>() {
+                            @Override
+                            public void accept(Throwable throwable) throws Exception {
 
-                    decodeChunkByChunk(iStream, output);
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    throw new RuntimeException("Input and output decode file error");
-                }
-
-
-            }
-        };
-
-        Thread thread = new Thread(runnable);
-        thread.start();
-
+                            }
+                        },
+                        new Action() {
+                            @Override
+                            public void run() throws Exception {
+                                Toast.makeText(MainActivity.this, "Successfully created:" + fileName, Toast.LENGTH_SHORT).show();
+                            }
+                        });
     }
 
     private void pickFile(View view) {
 
         int requestCode = 0;
 
-        if (view.getId() == encodeBtn.getId()) requestCode = Constants.ENCODE_REQUEST;
-        else if (view.getId() == decodeBtn.getId()) requestCode = Constants.DECODE_REQUEST;
+        if (view.getId() == encodeBtn.getId()) requestCode = ENCODE_REQUEST;
+        else if (view.getId() == decodeBtn.getId()) requestCode = DECODE_REQUEST;
 
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("file/*");
@@ -252,7 +221,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void initCryptParams() {
 
-        aesCrypt = new AESCrypt(getRandomKey(), Constants.AES_CBC_TYPE);
+        aesCrypt = new AESCrypt(getRandomKey(), AesTypes.CTR.getParam());
         iv = getRandomIV();
 
     }
