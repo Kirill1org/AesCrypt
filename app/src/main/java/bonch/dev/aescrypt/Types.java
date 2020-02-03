@@ -2,7 +2,7 @@ package bonch.dev.aescrypt;
 
 public enum Types {
 
-    CTR("AES/CTR/NoPadding"),
+    CTR("AES/AesCtr/NoPadding"),
     CBC("AES/CBC/PKCS7Padding");
 
     private String param;

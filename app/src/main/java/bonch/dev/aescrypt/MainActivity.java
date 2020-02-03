@@ -28,21 +28,30 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.concurrent.Callable;
 
+import io.reactivex.Emitter;
+import io.reactivex.Flowable;
 import io.reactivex.Observable;
 import io.reactivex.ObservableEmitter;
 import io.reactivex.ObservableOnSubscribe;
+import io.reactivex.Scheduler;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Action;
+import io.reactivex.functions.BiFunction;
 import io.reactivex.functions.Consumer;
 import io.reactivex.schedulers.Schedulers;
 
 
 public class MainActivity extends AppCompatActivity {
 
-    private AESCrypt aesCrypt;
+    private AesCBC aesCrypt;
     private byte[] iv;
+    int len;
+    FileChannel fileInputChannel;
+    FileChannel fileOutputChannel;
+    ByteBuffer byteBuffer;
 
     private Button encodeBtn;
     private Button decodeBtn;
@@ -128,10 +137,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void encodeFile(final Intent data, final String fileName) {
 
-        String path = getApplicationContext().getExternalFilesDir("") + "/" + "encoded_" + fileName + ".ctr";
+        String path = getExternalFilesDir("") + "/" + "encoded_" + fileName + ".ctr";
         File file = new File(path);
 
-        Disposable disposable = Observable.create(new ObservableOnSubscribe<ByteBuffer>() {
+      /*  Disposable disposable = Observable.create(new ObservableOnSubscribe<ByteBuffer>() {
             @RequiresApi(api = Build.VERSION_CODES.O)
             public void subscribe(ObservableEmitter<ByteBuffer> emitter) throws Exception {
                 try (FileChannel fileInputChannel = new FileInputStream(new File(getRealPathFromURI(getApplicationContext(), data.getData()))).getChannel();
@@ -183,13 +192,78 @@ public class MainActivity extends AppCompatActivity {
                             public void accept(Throwable throwable) throws Exception {
                                 throwable.printStackTrace();
                             }
-                        });
+                        });*/
 
+        Flowable.generate(new Callable<Integer>() {
+            @Override
+            public Integer call() throws Exception {
+                fileInputChannel = new FileInputStream(new File(getRealPathFromURI(getApplicationContext(), data.getData()))).getChannel();
+                fileOutputChannel = new FileOutputStream(file, true).getChannel();
+                /*byteBuffer = ByteBuffer.wrap(iv);
+                fileOutputChannel.write(byteBuffer);
+                byteBuffer.clear();*/
+                //byteBuffer = ByteBuffer.allocate(1024 * 8);
+                return 0;
+            }
+        }, new BiFunction<Integer, Emitter<ByteBuffer>, Integer>() {
+            @Override
+            public Integer apply(Integer integer, Emitter<ByteBuffer> emitter) throws Exception {
+                byteBuffer = ByteBuffer.allocate(1024 * 8);
+                int len = fileInputChannel.read(byteBuffer);
+                emitter.onNext(byteBuffer);
+                byteBuffer.clear();
+                if (len == -1) {emitter.onComplete();Log.e("GG", String.valueOf(integer));}
+                return integer+1;
+            }
+        }, new Consumer<Integer>() {
+            @Override
+            public void accept(Integer integer) throws Exception {
+                fileInputChannel.close();
+                fileOutputChannel.close();
+                Log.e("End","of crypt");
+            }
+        })
+                .subscribeOn(Schedulers.io())
+                .observeOn(Schedulers.computation())
+                .doOnNext(new Consumer<ByteBuffer>() {
+                    @Override
+                    public void accept(ByteBuffer byteBuffer) throws Exception {
+                        Log.e("BEFORE_CRYPT", Arrays.toString(byteBuffer.array()));
+                        byteBuffer.flip();
+                        aesCrypt.encrypt(iv, byteBuffer);
+                        Log.e("AFTER_CRYPT", Arrays.toString(byteBuffer.array()));
+                    }
+                })
+                .observeOn(Schedulers.io())
+                .doOnNext(new Consumer<ByteBuffer>() {
+                    @Override
+                    public void accept(ByteBuffer byteBuffer) throws Exception {
+                        try (FileChannel fileChannel = new FileOutputStream(file, true).getChannel()) {
+                            Log.e("BEFORE_WRYTE", Arrays.toString(byteBuffer.array()));
+                            byteBuffer.flip();
+                            fileChannel.write(byteBuffer);
+                        }
+                    }
+                })
+                .observeOn(AndroidSchedulers.mainThread())
+                .ignoreElements()
+                .subscribe(new Action() {
+                               @Override
+                               public void run() throws Exception {
+                                   Toast.makeText(MainActivity.this, "File successfully created!", Toast.LENGTH_SHORT).show();
+                               }
+                           },
+                        new Consumer<Throwable>() {
+                            @Override
+                            public void accept(Throwable throwable) throws Exception {
+                                throwable.printStackTrace();
+                            }
+                        });
     }
 
     private void decodeFile(final Intent data, final String fileName) {
 
-        String path = getApplicationContext().getExternalFilesDir("") + "/" + "decoded_" + fileName + ".jpg";
+        String path = getExternalFilesDir("") + "/" + "decoded_" + fileName + ".jpg";
         File file = new File(path);
         ByteBuffer byteBufferIv = ByteBuffer.allocate(16);
 
@@ -282,7 +356,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void initCryptParams() {
 
-        aesCrypt = new AESCrypt(getRandomKey(), AESCrypt.Types.CTR);
+        aesCrypt = new AesCBC(getRandomKey());
         iv = getRandomIV();
 
     }
